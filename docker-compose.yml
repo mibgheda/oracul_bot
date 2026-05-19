@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - db_data:/app/data
+    environment:
+      - DB_PATH=/app/data/oracul.db
+
+volumes:
+  db_data:
