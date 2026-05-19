@@ -17,7 +17,7 @@ CB_DELETE_CONFIRM = "delete_confirm"
 CB_DELETE_CANCEL = "delete_cancel"
 CB_SCHEDULE_DISABLE = "schedule_disable"
 
-SCHEDULE_TIME_MAP = {
+CB_SCHEDULE_TIME_MAP = {
     CB_SCHEDULE_TIME_07: "07:00",
     CB_SCHEDULE_TIME_10: "10:00",
     CB_SCHEDULE_TIME_14: "14:00",
