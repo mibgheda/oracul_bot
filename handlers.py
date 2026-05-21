@@ -1,7 +1,10 @@
 import logging
 import sqlite3
+from datetime import datetime
 
-from telegram import Update
+import pytz
+from timezonefinder import TimezoneFinder
+from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
@@ -22,20 +25,21 @@ from keyboards import (
     CB_SCHEDULE_NO,
     CB_SCHEDULE_TIME_MAP,
     CB_SCHEDULE_YES,
-    CB_TZ_PREFIX,
     consent_keyboard,
     delete_confirm_keyboard,
     disclaimer_keyboard,
     gender_keyboard,
+    location_keyboard,
     main_keyboard,
     schedule_manage_keyboard,
     schedule_question_keyboard,
     schedule_time_keyboard,
-    timezone_keyboard,
 )
 from threads import format_thread_message, get_random_thread
 from utils import can_get_prediction, format_utc_offset, user_date_str
 from config import PRIVACY_POLICY_URL
+
+_tf = TimezoneFinder()
 
 logger = logging.getLogger(__name__)
 
@@ -71,26 +75,27 @@ def _disclaimer_text() -> str:
     )
 
 
+def _name_text() -> str:
+    return "Как тебя зовут? Напиши своё имя — я буду обращаться к тебе именно так."
+
+
 def _gender_text() -> str:
     return "🌸 Укажи свой пол — это поможет сделать нити более точными для тебя."
 
 
-def _timezone_text() -> str:
+def _location_text() -> str:
     return (
-        "🌍 <b>Укажи свой часовой пояс</b>\n\n"
-        "Примеры:\n"
-        "• <b>UTC+2</b> — Киев, Хельсинки\n"
-        "• <b>UTC+3</b> — Москва, Минск\n"
-        "• <b>UTC+4</b> — Баку, Самара\n"
-        "• <b>UTC+5</b> — Екатеринбург, Ташкент\n"
-        "• <b>UTC+0</b> — Лондон"
+        "📍 <b>Последний шаг</b>\n\n"
+        "Поделись геолокацией — я определю твой часовой пояс, "
+        "чтобы нити приходили в нужное время.\n\n"
+        "Координаты не сохраняются, используется только часовой пояс."
     )
 
 
-def _welcome_text(gender: str) -> str:
+def _welcome_text(name: str, gender: str) -> str:
     if gender == "female":
         return (
-            "✨ <b>Ты коснулась первой нити.</b>\n\n"
+            f"✨ <b>{name}, ты коснулась первой нити.</b>\n\n"
             "Меня зовут Оракул Нитей Судьбы. Я не предсказываю будущее. "
             "Я помогаю распутать то, что уже здесь — страхи, обиды, выборы, "
             "обещания себе, которые ты забыла.\n\n"
@@ -101,7 +106,7 @@ def _welcome_text(gender: str) -> str:
         )
     else:
         return (
-            "✨ <b>Ты коснулся первой нити.</b>\n\n"
+            f"✨ <b>{name}, ты коснулся первой нити.</b>\n\n"
             "Меня зовут Оракул Нитей Судьбы. Я не предсказываю будущее. "
             "Я помогаю распутать то, что уже здесь — страхи, обиды, выборы, "
             "обещания себе, которые ты забыл.\n\n"
@@ -121,17 +126,15 @@ async def _show_main_menu(update: Update, user: sqlite3.Row) -> None:
     utc_offset = user["utc_offset"] if user["utc_offset"] is not None else 0
     tz_str = format_utc_offset(utc_offset)
     schedule_time = user["schedule_time"]
+    name = user["display_name"] or ""
 
     if schedule_time:
         note = f"\n\n📅 Рассылка настроена на <b>{schedule_time}</b> ({tz_str})"
     else:
         note = f"\n\n🌅 Нить доступна каждый день с 7:00 ({tz_str})"
 
-    text = (
-        "🔮 <b>Оракул Нитей Судьбы</b>\n\n"
-        "Мысленно задай вопрос или просто позволь нити появиться."
-        + note
-    )
+    greeting = f"{name}, мысленно задай вопрос или просто позволь нити появиться." if name else "Мысленно задай вопрос или просто позволь нити появиться."
+    text = "🔮 <b>Оракул Нитей Судьбы</b>\n\n" + greeting + note
     await _send(update, text=text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard())
 
 
@@ -154,15 +157,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
+    if user["display_name"] is None:
+        await update.message.reply_text(_name_text())
+        return
+
     if user["gender"] is None:
-        await update.message.reply_text(
-            _gender_text(), reply_markup=gender_keyboard()
-        )
+        await update.message.reply_text(_gender_text(), reply_markup=gender_keyboard())
         return
 
     if user["utc_offset"] is None:
         await update.message.reply_text(
-            _timezone_text(), parse_mode=ParseMode.HTML, reply_markup=timezone_keyboard()
+            _location_text(), parse_mode=ParseMode.HTML, reply_markup=location_keyboard()
         )
         return
 
@@ -215,6 +220,60 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def _complete_registration(msg, user: sqlite3.Row) -> None:
+    """Send welcome and main menu after all onboarding steps are done."""
+    if not user["welcomed"]:
+        db.set_welcomed(user["user_id"])
+        name = user["display_name"] or "друг"
+        gender = user["gender"] or "female"
+        await msg.reply_text(
+            _welcome_text(name, gender),
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard(),
+        )
+    else:
+        utc_offset = user["utc_offset"] if user["utc_offset"] is not None else 0
+        tz_str = format_utc_offset(utc_offset)
+        schedule_time = user["schedule_time"]
+        name = user["display_name"] or ""
+        if schedule_time:
+            note = f"\n\n📅 Рассылка настроена на <b>{schedule_time}</b> ({tz_str})"
+        else:
+            note = f"\n\n🌅 Нить доступна каждый день с 7:00 ({tz_str})"
+        greeting = f"{name}, мысленно задай вопрос или просто позволь нити появиться." if name else "Мысленно задай вопрос или просто позволь нити появиться."
+        await msg.reply_text(
+            "🔮 <b>Оракул Нитей Судьбы</b>\n\n" + greeting + note,
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_keyboard(),
+        )
+
+
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    user = db.get_user(user_id)
+    if not user or user["utc_offset"] is not None:
+        return
+
+    loc = update.message.location
+    tz_name = _tf.timezone_at(lat=loc.latitude, lng=loc.longitude)
+    if tz_name:
+        tz = pytz.timezone(tz_name)
+        offset_minutes = int(tz.utcoffset(datetime.now()).total_seconds() / 60)
+    else:
+        offset_minutes = 180  # UTC+3 fallback
+
+    db.set_timezone(user_id, offset_minutes)
+    tz_str = format_utc_offset(offset_minutes)
+    user = db.get_user(user_id)
+
+    await update.message.reply_text(
+        f"✅ Часовой пояс определён: <b>{tz_str}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await _complete_registration(update.message, user)
+
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     user_id = update.effective_user.id
@@ -224,14 +283,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Нажми /start для начала работы.")
         return
 
+    # Name capture state
+    if user["display_name"] is None:
+        name = text.strip()[:50]
+        db.set_display_name(user_id, name)
+        await update.message.reply_text(
+            f"Приятно познакомиться, {name}! 🌿\n\n{_gender_text()}",
+            reply_markup=gender_keyboard(),
+        )
+        return
+
     if user["gender"] is None:
         await update.message.reply_text(_gender_text(), reply_markup=gender_keyboard())
         return
 
+    # Location step: user typed instead of sharing location (e.g. "Пропустить")
     if user["utc_offset"] is None:
+        db.set_timezone(user_id, 180)  # UTC+3 default
+        user = db.get_user(user_id)
         await update.message.reply_text(
-            _timezone_text(), parse_mode=ParseMode.HTML, reply_markup=timezone_keyboard()
+            "✅ Установлен часовой пояс UTC+3.",
+            reply_markup=ReplyKeyboardRemove(),
         )
+        await _complete_registration(update.message, user)
         return
 
     if text == BTN_PREDICTION:
@@ -295,34 +369,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data == CB_DISCLAIMER_OK:
         db.set_disclaimer_ok(user_id)
-        await query.edit_message_text(_gender_text(), reply_markup=gender_keyboard())
+        await query.edit_message_text(_name_text())
 
     elif data in (CB_GENDER_FEMALE, CB_GENDER_MALE):
         gender = "female" if data == CB_GENDER_FEMALE else "male"
         db.set_gender(user_id, gender)
-        await query.edit_message_text(
-            _timezone_text(), parse_mode=ParseMode.HTML, reply_markup=timezone_keyboard()
+        await query.edit_message_text("✅ Принято!")
+        await query.message.reply_text(
+            _location_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=location_keyboard(),
         )
-
-    elif data.startswith(CB_TZ_PREFIX):
-        offset_minutes = int(data[len(CB_TZ_PREFIX):])
-        db.set_timezone(user_id, offset_minutes)
-        tz_str = format_utc_offset(offset_minutes)
-        user = db.get_user(user_id)
-
-        await query.edit_message_text(
-            f"✅ Часовой пояс сохранён: <b>{tz_str}</b>", parse_mode=ParseMode.HTML
-        )
-
-        if not user["welcomed"]:
-            db.set_welcomed(user_id)
-            await query.message.reply_text(
-                _welcome_text(user["gender"] or "female"),
-                parse_mode=ParseMode.HTML,
-                reply_markup=main_keyboard(),
-            )
-        else:
-            await _show_main_menu(update, user)
 
     elif data == CB_SCHEDULE_YES:
         await query.edit_message_text(

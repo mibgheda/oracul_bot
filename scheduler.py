@@ -29,8 +29,10 @@ async def check_and_send_predictions(bot: Bot) -> None:
 
         thread = get_random_thread()
         gender = user["gender"] or "female"
+        name = user["display_name"] or ""
         try:
-            text = format_thread_message(thread, gender)
+            greeting = f"Привет, {name}! ✨\n\n" if name else ""
+            text = greeting + format_thread_message(thread, gender)
             if thread.image_url:
                 await bot.send_photo(chat_id=user["user_id"], photo=thread.image_url)
                 await bot.send_message(

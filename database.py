@@ -30,6 +30,7 @@ def init_db() -> None:
             ("utc_offset", "INTEGER"),
             ("gender", "TEXT"),
             ("welcomed", "INTEGER DEFAULT 0"),
+            ("display_name", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
@@ -100,6 +101,11 @@ def set_timezone(user_id: int, utc_offset_minutes: int) -> None:
             "UPDATE users SET utc_offset = ? WHERE user_id = ?",
             (utc_offset_minutes, user_id),
         )
+
+
+def set_display_name(user_id: int, name: str) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE users SET display_name = ? WHERE user_id = ?", (name, user_id))
 
 
 def set_welcomed(user_id: int) -> None:

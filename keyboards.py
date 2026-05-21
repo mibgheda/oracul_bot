@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 # Callback data constants
 CB_CONSENT_AGREE   = "consent_agree"
@@ -75,6 +75,17 @@ def timezone_keyboard() -> InlineKeyboardMarkup:
     if row:
         rows.append(row)
     return InlineKeyboardMarkup(rows)
+
+
+def location_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton("📍 Определить автоматически", request_location=True)],
+            [KeyboardButton("Пропустить")],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
 
 
 def schedule_question_keyboard() -> InlineKeyboardMarkup:
