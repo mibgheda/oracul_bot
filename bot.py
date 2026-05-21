@@ -52,20 +52,13 @@ def main() -> None:
         .build()
     )
 
-    # User commands
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("schedule", cmd_schedule))
     app.add_handler(CommandHandler("delete", cmd_delete))
-
-    # Admin commands
     app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
-
-    # Callback queries (inline keyboard buttons)
     app.add_handler(CallbackQueryHandler(handle_callback))
-
-    # Reply keyboard buttons and general text
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     logger.info("Starting polling...")

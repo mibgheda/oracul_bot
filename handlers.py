@@ -12,7 +12,6 @@ from keyboards import (
     BTN_PREDICTION,
     CB_CONSENT_AGREE,
     CB_CONSENT_DECLINE,
-    CB_DELETE_ACCOUNT,
     CB_DELETE_CANCEL,
     CB_DELETE_CONFIRM,
     CB_DISCLAIMER_OK,
@@ -20,6 +19,7 @@ from keyboards import (
     CB_SCHEDULE_NO,
     CB_SCHEDULE_TIME_MAP,
     CB_SCHEDULE_YES,
+    CB_TZ_PREFIX,
     consent_keyboard,
     delete_confirm_keyboard,
     disclaimer_keyboard,
@@ -27,9 +27,10 @@ from keyboards import (
     schedule_manage_keyboard,
     schedule_question_keyboard,
     schedule_time_keyboard,
+    timezone_keyboard,
 )
-from predictions import get_random_prediction
-from utils import can_get_prediction, moscow_date_str
+from threads import format_thread_message, get_random_thread
+from utils import can_get_prediction, format_utc_offset, user_date_str
 from config import PRIVACY_POLICY_URL
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ def _consent_text() -> str:
     return (
         "👁 <b>Оракул Нитей Судьбы</b>\n\n"
         "Для использования бота необходимо дать согласие на обработку персональных данных.\n\n"
-        f'Ознакомьтесь с <a href="{PRIVACY_POLICY_URL}">Политикой конфиденциальности</a> и подтвердите согласие.'
+        f'Ознакомьтесь с <a href="{PRIVACY_POLICY_URL}">Политикой конфиденциальности</a> '
+        "и подтвердите согласие."
     )
 
 
@@ -52,27 +54,70 @@ def _disclaimer_text() -> str:
     )
 
 
+def _timezone_text() -> str:
+    return (
+        "🌍 <b>Укажите ваш часовой пояс</b>\n\n"
+        "Это нужно, чтобы предсказание приходило в правильное время.\n\n"
+        "Примеры:\n"
+        "• <b>UTC+2</b> — Киев, Хельсинки\n"
+        "• <b>UTC+3</b> — Москва, Минск\n"
+        "• <b>UTC+4</b> — Баку, Самара\n"
+        "• <b>UTC+5</b> — Екатеринбург, Ташкент\n"
+        "• <b>UTC+0</b> — Лондон"
+    )
+
+
+async def _show_consent(update: Update) -> None:
+    kwargs = dict(
+        text=_consent_text(),
+        parse_mode=ParseMode.HTML,
+        reply_markup=consent_keyboard(),
+        disable_web_page_preview=True,
+    )
+    if update.callback_query:
+        await update.callback_query.message.reply_text(**kwargs)
+    else:
+        await update.message.reply_text(**kwargs)
+
+
+async def _show_timezone_selection(update: Update) -> None:
+    kwargs = dict(
+        text=_timezone_text(),
+        parse_mode=ParseMode.HTML,
+        reply_markup=timezone_keyboard(),
+    )
+    if update.callback_query:
+        await update.callback_query.message.reply_text(**kwargs)
+    else:
+        await update.message.reply_text(**kwargs)
+
+
+async def _show_main_menu(update: Update, user: sqlite3.Row) -> None:
+    utc_offset = user["utc_offset"] if user["utc_offset"] is not None else 0
+    tz_str = format_utc_offset(utc_offset)
+    schedule_time = user["schedule_time"]
+
+    if schedule_time:
+        note = f"\n\n📅 Рассылка настроена на <b>{schedule_time}</b> ({tz_str})"
+    else:
+        note = f"\n\n🌅 Предсказание доступно каждый день с 7:00 ({tz_str})"
+
+    text = (
+        "🔮 <b>Оракул Нитей Судьбы</b>\n\n"
+        "Мысленно задайте вопрос или просто узнайте, что сулит грядущий день."
+        + note
+    )
+
+    msg = update.callback_query.message if update.callback_query else update.message
+    await msg.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard())
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    tg_user = update.effective_user
-    user = db.get_or_create_user(tg_user.id, tg_user.username, tg_user.first_name)
+    tg = update.effective_user
+    user = db.get_or_create_user(tg.id, tg.username, tg.first_name)
 
-    if user["is_deleted"]:
-        # Restart flow from consent, but keep last_pred_date intact
-        await update.message.reply_text(
-            _consent_text(),
-            parse_mode=ParseMode.HTML,
-            reply_markup=consent_keyboard(),
-            disable_web_page_preview=True,
-        )
-        return
-
-    if not user["consent_given"]:
-        await update.message.reply_text(
-            _consent_text(),
-            parse_mode=ParseMode.HTML,
-            reply_markup=consent_keyboard(),
-            disable_web_page_preview=True,
-        )
+    if user["is_deleted"] or not user["consent_given"]:
+        await _show_consent(update)
         return
 
     if not user["disclaimer_ok"]:
@@ -83,25 +128,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    await _show_main_menu(update, user["schedule_time"])
+    if user["utc_offset"] is None:
+        await _show_timezone_selection(update)
+        return
 
-
-async def _show_main_menu(update: Update, schedule_time: str | None) -> None:
-    if schedule_time:
-        note = f"\n\n📅 Ваша ежедневная рассылка настроена на <b>{schedule_time}</b> (мск)"
-    else:
-        note = "\n\n🌅 Предсказание доступно каждый день с 7:00 (мск)"
-
-    text = "🔮 <b>Оракул Нитей Судьбы</b>\n\nМысленно задайте вопрос или просто узнайте, что сулит грядущий день." + note
-
-    if update.callback_query:
-        await update.callback_query.message.reply_text(
-            text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard()
-        )
-    else:
-        await update.message.reply_text(
-            text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard()
-        )
+    await _show_main_menu(update, user)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -118,14 +149,17 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = db.get_user(update.effective_user.id)
     if not user or not user["consent_given"] or not user["disclaimer_ok"] or user["is_deleted"]:
-        await update.message.reply_text("Сначала нажмите /start для начала работы.")
+        await update.message.reply_text("Сначала нажмите /start.")
         return
 
+    utc_offset = user["utc_offset"] if user["utc_offset"] is not None else 0
+    tz_str = format_utc_offset(utc_offset)
     schedule_time = user["schedule_time"]
+
     if schedule_time:
-        text = f"📅 Ваша рассылка настроена на <b>{schedule_time}</b> по московскому времени."
+        text = f"📅 Рассылка настроена на <b>{schedule_time}</b> ({tz_str})."
     else:
-        text = "📅 У вас не настроена ежедневная рассылка."
+        text = f"📅 Ежедневная рассылка не настроена. Ваш часовой пояс: <b>{tz_str}</b>."
 
     await update.message.reply_text(
         text,
@@ -142,8 +176,8 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     await update.message.reply_text(
         "🗑 <b>Удаление аккаунта</b>\n\n"
-        "Вы уверены? После удаления вам нужно будет пройти регистрацию заново.\n\n"
-        "⚠️ Если сегодня вы уже получали предсказание — повторно получить его можно будет только завтра после 7:00.",
+        "Вы уверены? Все настройки будут сброшены и нужно будет пройти регистрацию заново.\n\n"
+        "⚠️ Если сегодня уже было предсказание — повторно получить его можно только завтра после 7:00.",
         parse_mode=ParseMode.HTML,
         reply_markup=delete_confirm_keyboard(),
     )
@@ -158,6 +192,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Нажмите /start для начала работы.")
         return
 
+    if user["utc_offset"] is None:
+        await _show_timezone_selection(update)
+        return
+
     if text == BTN_PREDICTION:
         await _handle_get_prediction(update, user)
     elif text == BTN_MY_SCHEDULE:
@@ -167,14 +205,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def _handle_get_prediction(update: Update, user: sqlite3.Row) -> None:
-    can, reason = can_get_prediction(user["last_pred_date"])
+    utc_offset = user["utc_offset"] if user["utc_offset"] is not None else 0
+    can, reason = can_get_prediction(user["last_pred_date"], utc_offset)
     if not can:
         await update.message.reply_text(reason)
         return
 
-    prediction = get_random_prediction()
-    today = moscow_date_str()
-    db.record_prediction(user["user_id"], today)
+    thread = get_random_thread()
+    local_date = user_date_str(utc_offset)
+    db.record_prediction(user["user_id"], local_date)
 
     schedule_time = user["schedule_time"]
     if schedule_time:
@@ -183,11 +222,10 @@ async def _handle_get_prediction(update: Update, user: sqlite3.Row) -> None:
         footer = ""
 
     await update.message.reply_text(
-        f"🔮 <b>Ваше предсказание на сегодня</b>\n\n<i>{prediction}</i>{footer}",
+        format_thread_message(thread) + footer,
         parse_mode=ParseMode.HTML,
     )
 
-    # Ask about schedule only if user hasn't decided yet
     if not user["schedule_set"]:
         await update.message.reply_text(
             "✨ Хотите, чтобы предсказание приходило автоматически каждый день в удобное время?",
@@ -201,7 +239,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     data = query.data
     user_id = update.effective_user.id
 
-    user = db.get_or_create_user(user_id, update.effective_user.username, update.effective_user.first_name)
+    db.get_or_create_user(user_id, update.effective_user.username, update.effective_user.first_name)
 
     if data == CB_CONSENT_AGREE:
         db.set_consent(user_id)
@@ -219,41 +257,55 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     elif data == CB_DISCLAIMER_OK:
         db.set_disclaimer_ok(user_id)
-        await query.edit_message_text("✅ Отлично! Добро пожаловать в Оракул Нитей Судьбы.")
-        updated_user = db.get_user(user_id)
-        await _show_main_menu(update, updated_user["schedule_time"] if updated_user else None)
+        await query.edit_message_text(
+            _timezone_text(),
+            parse_mode=ParseMode.HTML,
+            reply_markup=timezone_keyboard(),
+        )
+
+    elif data.startswith(CB_TZ_PREFIX):
+        offset_minutes = int(data[len(CB_TZ_PREFIX):])
+        db.set_timezone(user_id, offset_minutes)
+        tz_str = format_utc_offset(offset_minutes)
+        await query.edit_message_text(
+            f"✅ Часовой пояс сохранён: <b>{tz_str}</b>",
+            parse_mode=ParseMode.HTML,
+        )
+        user = db.get_user(user_id)
+        await _show_main_menu(update, user)
 
     elif data == CB_SCHEDULE_YES:
         await query.edit_message_text(
-            "🕐 Выберите время рассылки (по московскому времени):",
+            "🕐 Выберите время рассылки (по вашему часовому поясу):",
             reply_markup=schedule_time_keyboard(),
         )
 
     elif data == CB_SCHEDULE_NO:
         db.set_schedule(user_id, None)
         await query.edit_message_text(
-            "👍 Хорошо! Предсказание будет доступно каждый день с 7:00 утра по московскому времени."
+            "👍 Хорошо! Предсказание будет доступно каждый день с 7:00 по вашему времени."
         )
 
     elif data in CB_SCHEDULE_TIME_MAP:
         time_str = CB_SCHEDULE_TIME_MAP[data]
         db.set_schedule(user_id, time_str)
+        user = db.get_user(user_id)
+        tz_str = format_utc_offset(user["utc_offset"] or 0)
         await query.edit_message_text(
-            f"🌟 Отлично! Каждый день в <b>{time_str}</b> (мск) вам будет приходить предсказание.",
+            f"🌟 Готово! Каждый день в <b>{time_str}</b> ({tz_str}) вам будет приходить предсказание.",
             parse_mode=ParseMode.HTML,
         )
 
     elif data == CB_SCHEDULE_DISABLE:
         db.set_schedule(user_id, None)
         await query.edit_message_text(
-            "❌ Ежедневная рассылка отключена. Вы можете запросить предсказание вручную каждый день с 7:00."
+            "❌ Рассылка отключена. Предсказание доступно вручную каждый день с 7:00."
         )
 
     elif data == CB_DELETE_CONFIRM:
         db.delete_user(user_id)
         await query.edit_message_text(
-            "🗑 Аккаунт удалён. Все настройки сброшены.\n\n"
-            "Нажмите /start, чтобы начать заново.",
+            "🗑 Аккаунт удалён. Все настройки сброшены.\n\nНажмите /start, чтобы начать заново."
         )
 
     elif data == CB_DELETE_CANCEL:

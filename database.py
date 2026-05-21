@@ -16,6 +16,7 @@ def init_db() -> None:
                 first_name     TEXT,
                 consent_given  INTEGER NOT NULL DEFAULT 0,
                 disclaimer_ok  INTEGER NOT NULL DEFAULT 0,
+                utc_offset     INTEGER,
                 schedule_time  TEXT,
                 schedule_set   INTEGER NOT NULL DEFAULT 0,
                 last_pred_date TEXT,
@@ -23,6 +24,14 @@ def init_db() -> None:
                 created_at     TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        # Migration for existing databases
+        for col, definition in [
+            ("utc_offset", "INTEGER"),
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
+            except Exception:
+                pass
 
 
 @contextmanager
@@ -49,15 +58,12 @@ def get_or_create_user(user_id: int, username: str, first_name: str) -> sqlite3.
                 "INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
                 (user_id, username or "", first_name or ""),
             )
-            user = conn.execute(
-                "SELECT * FROM users WHERE user_id = ?", (user_id,)
-            ).fetchone()
         else:
             conn.execute(
                 "UPDATE users SET username = ?, first_name = ? WHERE user_id = ?",
                 (username or "", first_name or "", user_id),
             )
-    return user
+    return get_user(user_id)
 
 
 def get_user(user_id: int) -> Optional[sqlite3.Row]:
@@ -78,6 +84,14 @@ def set_disclaimer_ok(user_id: int) -> None:
     with get_db() as conn:
         conn.execute(
             "UPDATE users SET disclaimer_ok = 1 WHERE user_id = ?", (user_id,)
+        )
+
+
+def set_timezone(user_id: int, utc_offset_minutes: int) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET utc_offset = ? WHERE user_id = ?",
+            (utc_offset_minutes, user_id),
         )
 
 
@@ -104,6 +118,7 @@ def delete_user(user_id: int) -> None:
                is_deleted = 1,
                consent_given = 0,
                disclaimer_ok = 0,
+               utc_offset = NULL,
                schedule_time = NULL,
                schedule_set = 0
                WHERE user_id = ?""",
@@ -111,11 +126,10 @@ def delete_user(user_id: int) -> None:
         )
 
 
-def get_users_with_schedule(schedule_time: str) -> list:
+def get_all_scheduled_users() -> list:
     with get_db() as conn:
         return conn.execute(
-            "SELECT * FROM users WHERE schedule_time = ? AND is_deleted = 0",
-            (schedule_time,),
+            "SELECT * FROM users WHERE schedule_time IS NOT NULL AND is_deleted = 0"
         ).fetchall()
 
 

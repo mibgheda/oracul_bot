@@ -16,6 +16,7 @@ CB_DELETE_ACCOUNT = "delete_account"
 CB_DELETE_CONFIRM = "delete_confirm"
 CB_DELETE_CANCEL = "delete_cancel"
 CB_SCHEDULE_DISABLE = "schedule_disable"
+CB_TZ_PREFIX = "tz_"
 
 CB_SCHEDULE_TIME_MAP = {
     CB_SCHEDULE_TIME_07: "07:00",
@@ -47,6 +48,21 @@ def disclaimer_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Понял(а), продолжить ➡️", callback_data=CB_DISCLAIMER_OK)],
     ])
+
+
+def timezone_keyboard() -> InlineKeyboardMarkup:
+    offsets = list(range(-12, 13))  # UTC-12 .. UTC+12
+    rows = []
+    row = []
+    for h in offsets:
+        label = f"UTC{'+' if h >= 0 else ''}{h}"
+        row.append(InlineKeyboardButton(label, callback_data=f"{CB_TZ_PREFIX}{h * 60}"))
+        if len(row) == 5:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
 
 
 def schedule_question_keyboard() -> InlineKeyboardMarkup:
