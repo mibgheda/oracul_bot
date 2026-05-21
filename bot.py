@@ -17,7 +17,6 @@ from handlers import (
     cmd_schedule,
     cmd_start,
     handle_callback,
-    handle_location,
     handle_text,
 )
 from scheduler import create_scheduler
@@ -60,7 +59,6 @@ def main() -> None:
     app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     logger.info("Starting polling...")
