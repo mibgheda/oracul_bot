@@ -78,7 +78,10 @@ def get_user(user_id: int) -> Optional[sqlite3.Row]:
 
 def set_consent(user_id: int) -> None:
     with get_db() as conn:
-        conn.execute("UPDATE users SET consent_given = 1 WHERE user_id = ?", (user_id,))
+        conn.execute(
+            "UPDATE users SET consent_given = 1, is_deleted = 0 WHERE user_id = ?",
+            (user_id,),
+        )
 
 
 def set_disclaimer_ok(user_id: int) -> None:
