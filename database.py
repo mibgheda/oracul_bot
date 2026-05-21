@@ -16,7 +16,9 @@ def init_db() -> None:
                 first_name     TEXT,
                 consent_given  INTEGER NOT NULL DEFAULT 0,
                 disclaimer_ok  INTEGER NOT NULL DEFAULT 0,
+                gender         TEXT,
                 utc_offset     INTEGER,
+                welcomed       INTEGER NOT NULL DEFAULT 0,
                 schedule_time  TEXT,
                 schedule_set   INTEGER NOT NULL DEFAULT 0,
                 last_pred_date TEXT,
@@ -24,9 +26,10 @@ def init_db() -> None:
                 created_at     TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
-        # Migration for existing databases
         for col, definition in [
             ("utc_offset", "INTEGER"),
+            ("gender", "TEXT"),
+            ("welcomed", "INTEGER DEFAULT 0"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} {definition}")
@@ -75,16 +78,17 @@ def get_user(user_id: int) -> Optional[sqlite3.Row]:
 
 def set_consent(user_id: int) -> None:
     with get_db() as conn:
-        conn.execute(
-            "UPDATE users SET consent_given = 1 WHERE user_id = ?", (user_id,)
-        )
+        conn.execute("UPDATE users SET consent_given = 1 WHERE user_id = ?", (user_id,))
 
 
 def set_disclaimer_ok(user_id: int) -> None:
     with get_db() as conn:
-        conn.execute(
-            "UPDATE users SET disclaimer_ok = 1 WHERE user_id = ?", (user_id,)
-        )
+        conn.execute("UPDATE users SET disclaimer_ok = 1 WHERE user_id = ?", (user_id,))
+
+
+def set_gender(user_id: int, gender: str) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE users SET gender = ? WHERE user_id = ?", (gender, user_id))
 
 
 def set_timezone(user_id: int, utc_offset_minutes: int) -> None:
@@ -93,6 +97,11 @@ def set_timezone(user_id: int, utc_offset_minutes: int) -> None:
             "UPDATE users SET utc_offset = ? WHERE user_id = ?",
             (utc_offset_minutes, user_id),
         )
+
+
+def set_welcomed(user_id: int) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE users SET welcomed = 1 WHERE user_id = ?", (user_id,))
 
 
 def set_schedule(user_id: int, schedule_time: Optional[str]) -> None:
@@ -118,7 +127,9 @@ def delete_user(user_id: int) -> None:
                is_deleted = 1,
                consent_given = 0,
                disclaimer_ok = 0,
+               gender = NULL,
                utc_offset = NULL,
+               welcomed = 0,
                schedule_time = NULL,
                schedule_set = 0
                WHERE user_id = ?""",
@@ -156,8 +167,7 @@ def get_stats() -> dict:
             """SELECT schedule_time, COUNT(*) as cnt
                FROM users
                WHERE schedule_time IS NOT NULL AND is_deleted = 0
-               GROUP BY schedule_time
-               ORDER BY schedule_time"""
+               GROUP BY schedule_time ORDER BY schedule_time"""
         ).fetchall()
         no_schedule = conn.execute(
             """SELECT COUNT(*) FROM users

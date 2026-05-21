@@ -28,10 +28,11 @@ async def check_and_send_predictions(bot: Bot) -> None:
             continue
 
         thread = get_random_thread()
+        gender = user["gender"] or "female"
         try:
             await bot.send_message(
                 chat_id=user["user_id"],
-                text=format_thread_message(thread),
+                text=format_thread_message(thread, gender),
                 parse_mode=ParseMode.HTML,
             )
             db.record_prediction(user["user_id"], local_date)
