@@ -260,10 +260,12 @@ async def _handle_get_thread(update: Update, user: sqlite3.Row) -> None:
     if user["schedule_time"]:
         footer = f"\n\n📅 Следующая нить придёт автоматически в <b>{user['schedule_time']}</b>."
 
-    await update.message.reply_text(
-        format_thread_message(thread, gender) + footer,
-        parse_mode=ParseMode.HTML,
-    )
+    text = format_thread_message(thread, gender) + footer
+    if thread.image_url:
+        await update.message.reply_photo(photo=thread.image_url)
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
     if not user["schedule_set"]:
         await update.message.reply_text(
