@@ -19,9 +19,35 @@ def get_random_thread() -> Thread:
     return random.choice(THREADS)
 
 
-def format_thread_message(thread: Thread, gender: str = "female") -> str:
+def pick_thread_for_user(user_variants: dict) -> tuple[Thread, int]:
+    """
+    Pick a (thread, variant_index) the user hasn't seen yet.
+    user_variants: {thread_name: [received_variant_indices]}
+    Falls back to a fully random pick if everything has been collected.
+    """
+    available: list[tuple[Thread, int]] = []
+    for thread in THREADS:
+        total = len(thread.posts) if thread.posts else 1
+        received = set(user_variants.get(thread.name, []))
+        for i in range(total):
+            if i not in received:
+                available.append((thread, i))
+
+    if not available:
+        # Full collection complete — restart cycle
+        thread = random.choice(THREADS)
+        idx = random.randrange(len(thread.posts)) if thread.posts else 0
+        return thread, idx
+
+    return random.choice(available)
+
+
+def format_thread_message(thread: Thread, gender: str = "female", variant_index: int | None = None) -> str:
     if thread.posts:
-        female_text, male_text = random.choice(thread.posts)
+        if variant_index is not None:
+            female_text, male_text = thread.posts[variant_index % len(thread.posts)]
+        else:
+            female_text, male_text = random.choice(thread.posts)
         text = male_text if (gender == "male" and male_text is not None) else female_text
     else:
         text = thread.meaning

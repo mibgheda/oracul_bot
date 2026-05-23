@@ -27,6 +27,7 @@ CB_SCHEDULE_TIME_MAP = {
 BTN_PREDICTION    = "🎲 Дай нить дня"
 BTN_HOW_IT_WORKS  = "❓ Как это работает"
 BTN_MY_SCHEDULE   = "📅 Моя рассылка"
+BTN_COLLECTION    = "🧶 Моя коллекция"
 BTN_DELETE        = "🗑 Удалить аккаунт"
 
 
@@ -35,7 +36,7 @@ def main_keyboard() -> ReplyKeyboardMarkup:
         [
             [BTN_PREDICTION],
             [BTN_HOW_IT_WORKS, BTN_MY_SCHEDULE],
-            [BTN_DELETE],
+            [BTN_COLLECTION, BTN_DELETE],
         ],
         resize_keyboard=True,
     )

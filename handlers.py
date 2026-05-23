@@ -6,7 +6,9 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 import database as db
+from knots import SmallKnot, get_new_knots
 from keyboards import (
+    BTN_COLLECTION,
     BTN_DELETE,
     BTN_HOW_IT_WORKS,
     BTN_MY_SCHEDULE,
@@ -31,7 +33,7 @@ from keyboards import (
     schedule_question_keyboard,
     schedule_time_keyboard,
 )
-from threads import format_thread_message, get_random_thread
+from threads import THREADS, format_thread_message, pick_thread_for_user
 from utils import can_get_prediction, utc_date_str
 from config import PRIVACY_POLICY_URL
 
@@ -225,6 +227,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(HOW_IT_WORKS_TEXT, parse_mode=ParseMode.HTML)
     elif text == BTN_MY_SCHEDULE:
         await cmd_schedule(update, context)
+    elif text == BTN_COLLECTION:
+        await _show_collection(update, user)
     elif text == BTN_DELETE:
         await cmd_delete(update, context)
 
@@ -235,26 +239,97 @@ async def _handle_get_thread(update: Update, user: sqlite3.Row) -> None:
         await update.message.reply_text(reason)
         return
 
+    user_id = user["user_id"]
     gender = user["gender"] or "female"
-    thread = get_random_thread()
-    db.record_prediction(user["user_id"], utc_date_str())
+    today = utc_date_str()
+
+    user_variants = db.get_user_variants(user_id)
+    thread, variant_index = pick_thread_for_user(user_variants)
+
+    db.record_thread_variant(user_id, thread.name, variant_index, today)
+    db.record_prediction(user_id, today)
 
     footer = ""
     if user["schedule_time"]:
         footer = f"\n\n📅 Следующая нить придёт автоматически в <b>{user['schedule_time']}</b>."
 
-    text = format_thread_message(thread, gender) + footer
+    text = format_thread_message(thread, gender, variant_index) + footer
     if thread.image_url:
         await update.message.reply_photo(photo=thread.image_url)
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+    # Check for newly unlocked knots
+    all_received = set(user_variants.keys()) | {thread.name}
+    unlocked_ids = {k["knot_id"] for k in db.get_user_knots(user_id)}
+    new_knots = get_new_knots(thread.name, all_received, unlocked_ids)
+
+    for knot in new_knots:
+        knot_type = "small" if isinstance(knot, SmallKnot) else "transformation"
+        db.record_knot(user_id, knot.knot_id, knot_type, knot.name, today)
+        s = "а" if gender == "female" else ""
+        emoji = "🪢" if knot_type == "small" else "🌀"
+        level = "Малый узел" if knot_type == "small" else "Узел трансформации"
+        await update.message.reply_text(
+            f"{emoji} <b>{level} разблокирован!</b>\n\n"
+            f"Ты собрал{s} «{knot.name}».\n\n"
+            f"{knot.unlock_text}",
+            parse_mode=ParseMode.HTML,
+        )
+
     if not user["schedule_set"]:
         await update.message.reply_text(
             "✨ Хочешь, чтобы нить приходила автоматически каждый день в удобное время?",
             reply_markup=schedule_question_keyboard(),
         )
+
+
+async def _show_collection(update: Update, user: sqlite3.Row) -> None:
+    user_id = user["user_id"]
+    user_variants = db.get_user_variants(user_id)
+    knots_data = db.get_user_knots(user_id)
+    name = user["display_name"] or ""
+
+    threads_received = len(user_variants)
+    variants_total = sum(len(v) for v in user_variants.values())
+
+    # Per-type breakdown
+    type_stats: dict[tuple, dict] = {}
+    for thread in THREADS:
+        key = (thread.type_emoji, thread.type_name)
+        if key not in type_stats:
+            type_stats[key] = {"total": 0, "received": 0}
+        type_stats[key]["total"] += 1
+        if thread.name in user_variants:
+            type_stats[key]["received"] += 1
+
+    header = f"🧶 <b>Коллекция {name}</b>\n\n" if name else "🧶 <b>Моя коллекция</b>\n\n"
+    lines = [header, f"Нитей открыто: <b>{threads_received}/39</b>  |  вариантов: <b>{variants_total}/195</b>\n"]
+
+    for (emoji, type_name), s in type_stats.items():
+        r, t = s["received"], s["total"]
+        bar = "█" * r + "░" * (t - r)
+        lines.append(f"{emoji} {type_name}  {bar}  {r}/{t}")
+
+    small_knots = [k for k in knots_data if k["knot_type"] == "small"]
+    trans_knots = [k for k in knots_data if k["knot_type"] == "transformation"]
+
+    lines.append(f"\n🪢 <b>Малые узлы:</b> {len(small_knots)}/10")
+    if small_knots:
+        for k in small_knots:
+            lines.append(f"  ✨ {k['knot_name']}")
+    else:
+        lines.append("  пока нет")
+
+    lines.append(f"\n🌀 <b>Узлы трансформации:</b> {len(trans_knots)}/7")
+    if trans_knots:
+        for k in trans_knots:
+            lines.append(f"  🌟 {k['knot_name']}")
+    else:
+        lines.append("  пока нет")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

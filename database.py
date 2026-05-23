@@ -26,6 +26,25 @@ def init_db() -> None:
                 created_at     TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_thread_variants (
+                user_id       INTEGER NOT NULL,
+                thread_name   TEXT NOT NULL,
+                variant_index INTEGER NOT NULL,
+                received_date TEXT NOT NULL,
+                PRIMARY KEY (user_id, thread_name, variant_index)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_knots (
+                user_id     INTEGER NOT NULL,
+                knot_id     TEXT NOT NULL,
+                knot_type   TEXT NOT NULL,
+                knot_name   TEXT NOT NULL,
+                unlocked_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, knot_id)
+            )
+        """)
         for col, definition in [
             ("utc_offset", "INTEGER"),
             ("gender", "TEXT"),
@@ -197,3 +216,46 @@ def get_stats() -> dict:
         "no_schedule": no_schedule,
         "predictions_today": predictions_today,
     }
+
+
+# ─── Thread variant tracking ──────────────────────────────────────────────────
+
+def get_user_variants(user_id: int) -> dict:
+    """Return {thread_name: [variant_index, ...]} for all received variants."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT thread_name, variant_index FROM user_thread_variants WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+    result: dict = {}
+    for row in rows:
+        result.setdefault(row["thread_name"], []).append(row["variant_index"])
+    return result
+
+
+def record_thread_variant(user_id: int, thread_name: str, variant_index: int, date: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO user_thread_variants
+               (user_id, thread_name, variant_index, received_date) VALUES (?, ?, ?, ?)""",
+            (user_id, thread_name, variant_index, date),
+        )
+
+
+# ─── Knot tracking ────────────────────────────────────────────────────────────
+
+def get_user_knots(user_id: int) -> list:
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT knot_id, knot_type, knot_name FROM user_knots WHERE user_id = ? ORDER BY unlocked_at",
+            (user_id,),
+        ).fetchall()
+
+
+def record_knot(user_id: int, knot_id: str, knot_type: str, knot_name: str, date: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO user_knots
+               (user_id, knot_id, knot_type, knot_name, unlocked_at) VALUES (?, ?, ?, ?, ?)""",
+            (user_id, knot_id, knot_type, knot_name, date),
+        )
